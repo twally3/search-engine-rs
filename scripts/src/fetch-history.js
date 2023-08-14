@@ -55,7 +55,10 @@ fetch(
 							.filter(Boolean)
 							.map(x => x.contents)
 							.flat()
-							.map(x => x.videoRenderer.videoId),
+							.map(x => ({
+								videoId: x.videoRenderer.videoId,
+								title: x.videoRenderer.title.runs[0].text,
+							})),
 					),
 				),
 			),

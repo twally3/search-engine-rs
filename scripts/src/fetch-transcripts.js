@@ -64,25 +64,34 @@ const fetchTranscript = transcript =>
 		r => r.text(),
 	);
 
-const ids = JSON.parse(
+const videos = JSON.parse(
 	fs.readFileSync(path.join(__dirname, 'ids.json'), 'utf-8'),
 );
 
+const manifest = {};
+const dir = path.join(__dirname, '..', '..', 'transcripts');
+if (!fs.existsSync(dir)) {
+	fs.mkdirSync(dir, { recursive: true });
+}
+
 // TODO: This should be in a loop
-for (const videoId of ids) {
+for (const video of videos) {
+	const { videoId, title } = video;
+	manifest[videoId] = title;
 	try {
 		const { manuallyCreated, generated } = await fetchTranscripts(videoId);
 		const transcript = findTranscript(['en'], [manuallyCreated, generated]);
 		if (transcript === null) throw new Error('Failed to find transcript');
 		const captions = await fetchTranscript(transcript);
 
-		const dir = path.join(__dirname, '..', '..', 'transcripts');
-		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
-		}
-
 		fs.writeFileSync(path.join(dir, `${videoId}.xml`), captions, 'utf8');
 	} catch (e) {
 		console.error(`SKIPPING ${videoId}`, e);
 	}
 }
+
+fs.writeFileSync(
+	path.join(dir, 'manifest.json'),
+	JSON.stringify(manifest),
+	'utf8',
+);

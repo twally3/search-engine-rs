@@ -81,13 +81,28 @@ fn read_xml_file<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
 	return Ok(content);
 }
 
-type TF = HashMap<String, usize>;
-type DTF = HashMap<std::path::PathBuf, TF>;
+type TermFreq = HashMap<String, usize>;
+type TermFreqForDoc = HashMap<std::path::PathBuf, TermFreq>;
+type DocFreq = HashMap<String, usize>;
 
-fn main() -> std::io::Result<()> {
+#[derive(Debug,serde::Serialize,serde::Deserialize)]
+struct Index {
+    term_freq_per_doc: TermFreqForDoc,
+    doc_freq: DocFreq,
+}
+
+impl Index {
+    fn new(term_freq_per_doc: TermFreqForDoc, doc_freq: DocFreq) -> Self {
+        return Self { term_freq_per_doc, doc_freq };
+    }
+}
+
+fn index() -> std::io::Result<()> {
 	let dir_path = "transcripts";
 	let dir = fs::read_dir(dir_path)?;
-	let mut tf_index = DTF::new();
+
+	let mut tf_for_docs = TermFreqForDoc::new();
+    let mut doc_freq = DocFreq::new();
 
 	for file in dir {
 		let file_path = file?.path();
@@ -106,17 +121,107 @@ fn main() -> std::io::Result<()> {
 			tf.entry(term).and_modify(|x| *x += 1).or_insert(1);
 		}
 
+        for (token, _) in tf.iter() {
+            doc_freq.entry(token.to_owned()).and_modify(|x| *x += 1).or_insert(1);
+        }
+
 		// let mut stats = tf.iter().collect::<Vec<_>>();
 		// stats.sort_by_key(|(_, &f)| f);
 		// stats.reverse();
 
-		tf_index.insert(file_path, tf);
+		tf_for_docs.insert(file_path, tf);
 	}
+
+    let idx = Index::new(tf_for_docs, doc_freq);
 
 	let index_path = "index.json";
 	let file = File::create(index_path)?;
 	let file = BufWriter::new(file);
-	serde_json::to_writer(file, &tf_index)?;
+    serde_json::to_writer(file, &idx)?;
 
-	return Ok(());
+    return Ok(());
+}
+
+fn search() -> std::io::Result<()> {
+	let index_path = "index.json";
+    let file = File::open(index_path)?;
+    let file = BufReader::new(file);
+    let idx: Index = serde_json::from_reader(file)?;
+
+    let manifest: HashMap<String, String> = serde_json::from_reader(BufReader::new(File::open("transcripts/manifest.json")?))?;
+
+    // let terms = "legend of zelda";
+    let terms = "zelda tears of the kingdom";
+    // let terms = "breath of the wild";
+    // let terms = "pokemon";
+    // let terms = "rust debugging";
+    let terms = terms.chars().collect::<Vec<_>>();
+
+    let mut scores = Vec::<(std::path::PathBuf, f32)>::new();
+
+    let num_docs = idx.term_freq_per_doc.len() as f32;
+    for (path, term_freq) in idx.term_freq_per_doc {
+        let total_words_in_doc: usize = term_freq.iter().map(|(_, x)| *x).sum();
+        println!("{path:?} => {total_words_in_doc:?} words");
+
+        let mut rank = 0.0;
+
+        for token in Lexer::new(&terms) {
+			let term = token
+				.into_iter()
+				.map(|x| x.to_ascii_uppercase())
+				.collect::<String>();
+
+            let term_freq_in_doc = match term_freq.get(&term) {
+                Some(t) => *t as f32,
+                None => 0.0
+            };
+
+            let tf = term_freq_in_doc / total_words_in_doc as f32;
+
+            let total_number_of_docs = num_docs;
+            let num_docs_with_term = match idx.doc_freq.get(&term) {
+                Some(freq) => *freq as f32,
+                None => 0.0
+            };
+            let idf = (total_number_of_docs / (num_docs_with_term)).log10();
+
+            let sub_total = tf * idf;
+            rank += sub_total;
+            println!("{term:?} : {term_freq_in_doc:?}, {num_docs_with_term:?} => {tf:?} / {idf:?} = {sub_total:?}");
+        }
+        println!("Total for doc: {rank:?}");
+        println!("---");
+
+        scores.push((path, rank));
+    }
+
+    scores.sort_by(|(_, a),(_, b)| a.total_cmp(b));
+    scores.reverse();
+
+    println!("SEARCH TERM: {search:?}", search = String::from_iter(terms) );
+    for (k, v) in scores.iter().take(10) {
+        let path_string = match k.clone().into_os_string().into_string() {
+            Ok(t) => Ok(t),
+            Err(_) => Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Failed to parse path string")),
+        }?;
+        let id = path_string.split("/").last().unwrap().split(".").next().unwrap();
+
+        let name = match manifest.get(id) {
+            Some(x) => x,
+            None => "N/a"
+        };
+        println!("{name:?} ({id:?}) : {v:?}");
+    }
+
+    return Ok(());
+}
+
+fn main() -> std::io::Result<()> {
+    let pattern = std::env::args().nth(1).expect("no pattern given");
+    return match pattern.as_str() {
+        "index" => index(),
+        "search" => search(),
+        _ => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid input".to_owned()))
+    };
 }
