@@ -158,20 +158,16 @@ fn search() -> std::io::Result<()> {
 	let manifest: HashMap<String, String> =
 		serde_json::from_reader(BufReader::new(File::open("transcripts/manifest.json")?))?;
 
-	// let terms = "legend of zelda";
-	// let terms = "zelda tears of the kingdom";
-	let terms = "zelda breath of the wild";
-	// let terms = "breath of the wild";
-	// let terms = "pokemon";
-	// let terms = "rust debugging";
+	let terms = std::env::args().nth(2).expect("no pattern given");
 	let terms = terms.chars().collect::<Vec<_>>();
 
 	let mut scores = Vec::<(std::path::PathBuf, f32)>::new();
 
 	let num_docs = idx.term_freq_per_doc.len() as f32;
+	println!("Total documents: {num_docs:?}");
+
 	for (path, term_freq) in idx.term_freq_per_doc {
 		let total_words_in_doc: usize = term_freq.iter().map(|(_, x)| *x).sum();
-		println!("{path:?} => {total_words_in_doc:?} words");
 
 		let mut rank = 0.0;
 
@@ -192,10 +188,7 @@ fn search() -> std::io::Result<()> {
 
 			let sub_total = tf * idf;
 			rank += sub_total;
-			println!("{term:?} : {term_freq_in_doc:?}, {num_docs_with_term:?} => {tf:?} / {idf:?} = {sub_total:?}");
 		}
-		println!("Total for doc: {rank:?}");
-		println!("---");
 
 		scores.push((path, rank));
 	}
@@ -209,26 +202,13 @@ fn search() -> std::io::Result<()> {
 		.take(10)
 		.filter(|(_, score)| score.total_cmp(&0.0).is_gt())
 	{
-		// TODO: This is pretty grim
-		let path_string = match k.clone().into_os_string().into_string() {
-			Ok(t) => Ok(t),
-			Err(_) => Err(std::io::Error::new(
-				std::io::ErrorKind::Unsupported,
-				"Failed to parse path string",
-			)),
-		}?;
-		let id = path_string
-			.split("/")
-			.last()
-			.unwrap()
-			.split(".")
-			.next()
-			.unwrap();
+		let id = k
+			.file_stem()
+			.map(|x| x.to_string_lossy().to_string())
+			.and_then(|x| manifest.get(&x));
 
-		let name = match manifest.get(id) {
-			Some(x) => x,
-			None => "N/a",
-		};
+		let name = id.map(|x| x.to_owned()).unwrap_or_else(|| "N/a".to_owned());
+
 		println!("{name:?} ({id:?}) : {v:?}");
 	}
 

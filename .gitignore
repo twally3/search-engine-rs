@@ -2,5 +2,6 @@
 .DS_Store
 node_modules
 transcripts
-./scripts/src/ids.json
+/scripts/src/ids.json
 index.json
+.env
