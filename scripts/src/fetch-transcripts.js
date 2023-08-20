@@ -74,20 +74,48 @@ if (!fs.existsSync(dir)) {
 	fs.mkdirSync(dir, { recursive: true });
 }
 
-// TODO: This should be in a loop
-for (const video of videos) {
-	const { videoId, title } = video;
-	manifest[videoId] = title;
-	try {
-		const { manuallyCreated, generated } = await fetchTranscripts(videoId);
-		const transcript = findTranscript(['en'], [manuallyCreated, generated]);
-		if (transcript === null) throw new Error('Failed to find transcript');
-		const captions = await fetchTranscript(transcript);
+const chunkSize = 20;
 
-		fs.writeFileSync(path.join(dir, `${videoId}.xml`), captions, 'utf8');
-	} catch (e) {
-		console.error(`SKIPPING ${videoId}`, e);
+for (let i = 0; i < videos.length; i += chunkSize) {
+	console.log(100 * (i / videos.length));
+
+	const localVideos = videos.slice(i, i + chunkSize);
+	const promises = [];
+	for (const video of localVideos) {
+		const { videoId, title } = video;
+		manifest[videoId] = title;
+
+		const p = fetchTranscripts(videoId)
+			.then(async ({ manuallyCreated, generated }) => {
+				const transcript = findTranscript(['en'], [manuallyCreated, generated]);
+				if (transcript === null) throw new Error('Failed to find transcript');
+
+				return fetchTranscript(transcript);
+			})
+			.then(captions => ({
+				videoId,
+				title,
+				captions,
+			}))
+			.catch(e => {
+				console.error(`SKIPPING ${videoId}`, e);
+				return Promise.reject(e);
+			});
+		promises.push(p);
 	}
+
+	const results = await Promise.allSettled(promises);
+	await Promise.all(
+		results
+			.filter(x => x.status === 'fulfilled')
+			.map(x =>
+				fs.promises.writeFile(
+					path.join(dir, `${x.value.videoId}.xml`),
+					x.value.captions,
+					'utf8',
+				),
+			),
+	);
 }
 
 fs.writeFileSync(
