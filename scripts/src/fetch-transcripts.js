@@ -15,7 +15,15 @@ const fetchTranscripts = videoId =>
 		.then(html => {
 			const splitHtml = html.split('"captions":');
 
-			if (splitHtml.length <= 1) throw new Error('Unhandled captions error');
+			if (splitHtml.length <= 1) {
+				if (videoId.startsWith('http://') || videoId.startsWith('http://'))
+					throw new Error('Invalid video ID ' + videoId);
+				if (html.search('class="g-recaptcha"') !== -1)
+					throw new Error('Too Many Requests');
+				if (html.search('"playabilityStatus":') === -1)
+					throw new Error('Video unavailable');
+				throw new Error('Unhandled captions error');
+			}
 
 			const captionsJson = JSON.parse(
 				splitHtml[1].split(',"videoDetails')[0].replace('\n', ''),

@@ -54,7 +54,68 @@ const sleep = x => new Promise(r => setTimeout(r, x));
 const parseHeaders = header =>
 	header.replace(/;$/, '').split(/=(.*)/s).slice(0, 2);
 
-const fetchData = async () => {
+const parseDate = str => {
+	const baseDate = new Date();
+	const currentDate = new Date(
+		Date.UTC(
+			baseDate.getUTCFullYear(),
+			baseDate.getUTCMonth(),
+			baseDate.getUTCDate(),
+		),
+	);
+
+	const tokens = str.split(' ');
+	const daysOfTheWeek = [
+		'Sunday',
+		'Monday',
+		'Tuesday',
+		'Wednesday',
+		'Thursday',
+		'Friday',
+		'Saturday',
+	];
+
+	if (tokens[0] === 'Today') {
+		return currentDate;
+	} else if (tokens[0] === 'Yesterday') {
+		const yesterday = new Date(currentDate);
+		yesterday.setDate(currentDate.getDate() - 1);
+		return yesterday;
+	} else if (tokens.length === 1 && daysOfTheWeek.includes(tokens[0])) {
+		const dayIndex = daysOfTheWeek.indexOf(tokens[0]);
+		const targetDate = new Date(currentDate);
+		targetDate.setDate(
+			currentDate.getDate() - ((currentDate.getDay() + 7 - dayIndex) % 7),
+		);
+		return targetDate;
+	} else if (tokens.length === 2 || tokens.length === 3) {
+		const months = [
+			'Jan',
+			'Feb',
+			'Mar',
+			'Apr',
+			'May',
+			'Jun',
+			'Jul',
+			'Aug',
+			'Sep',
+			'Oct',
+			'Nov',
+			'Dec',
+		];
+
+		const monthIdx = months.indexOf(tokens[0]);
+		const date = parseInt(tokens[1].replace(',', ''));
+		const year = parseInt(tokens[2] ?? currentDate.getFullYear());
+
+		const targetDate = new Date(Date.UTC(year, monthIdx, date));
+		return targetDate;
+	}
+
+	return null;
+};
+
+const fetchData = async (videos, parsedDate) => {
 	const MAX_ITERATIONS = 300;
 	const SLEEP_MS = 500;
 	let token = null;
@@ -125,19 +186,34 @@ const fetchData = async () => {
 				x => x.content.reelShelfRenderer?.title?.runs?.[0]?.text === undefined,
 			)
 			.map(x => ({
-				header: x.parentHeader,
+				date: parseDate(x.parentHeader),
 				videoId: x.content.videoRenderer.videoId,
 				title: x.content.videoRenderer.title.runs[0].text,
 			}));
 
-		promises.push(x);
+		const y = parsedDate !== null ? x.filter(a => a.date >= parsedDate) : x;
+
+		promises.push(y);
 		counter++;
+		if (x.length !== y.length) break;
 	} while (token !== null && counter < MAX_ITERATIONS);
 
-	return promises.flat();
+	return promises.flat().concat(videos);
 };
 
-fetchData()
+fs.readFile(path.join(__dirname, 'ids.json'), 'utf-8')
+	.then(data => {
+		const videos = JSON.parse(data);
+		const latestVideo = videos.find(video => video.date !== null) ?? null;
+		const parsedDate = latestVideo === null ? null : new Date(latestVideo.date);
+		const filteredVideos =
+			parsedDate === null
+				? videos
+				: videos.filter(video => new Date(video.date) < parsedDate);
+		return [filteredVideos, parsedDate];
+	})
+	.catch(err => (err.code === 'ENOENT' ? [[], null] : Promise.reject(err)))
+	.then(([videos, parsedDate]) => fetchData(videos, parsedDate))
 	.then(data =>
 		fs.writeFile(
 			path.join(__dirname, 'ids.json'),
