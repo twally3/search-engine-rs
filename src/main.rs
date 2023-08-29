@@ -1,7 +1,7 @@
 use rust_stemmers::{Algorithm, Stemmer};
 use std::{
 	collections::HashMap,
-	fs::{self, File},
+	fs::File,
 	io::{BufReader, BufWriter},
 	path::Path,
 };
@@ -110,19 +110,34 @@ impl Index {
 	}
 }
 
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Video {
+	title: String,
+	video_id: String,
+	// date: String,
+}
+
 fn index() -> std::io::Result<()> {
-	let dir_path = "transcripts";
-	let dir = fs::read_dir(dir_path)?;
+	let base_path = Path::new(".").join("scripts").join("src").join("ids.json");
+	let videos_file = BufReader::new(File::open(base_path)?);
+	let videos: Vec<Video> = serde_json::from_reader(videos_file)?;
 
 	let mut tf_for_docs = TermFreqForDoc::new();
 	let mut doc_freq = DocFreq::new();
 
-	for file in dir {
-		let file_path = file?.path();
+	for video in videos {
+		let file_path = Path::new(".")
+			.join("transcripts")
+			.join(video.video_id + ".xml");
 
 		println!("Indexing {file_path:?}");
 
-		let content = read_xml_file(&file_path)?.chars().collect::<Vec<_>>();
+		let content = match read_xml_file(&file_path) {
+			Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(video.title),
+			x => x,
+		}?;
+		let content = content.chars().collect::<Vec<_>>();
 		let mut tf = HashMap::<String, usize>::new();
 
 		for term in Lexer::new(&content) {
@@ -202,12 +217,15 @@ fn search() -> std::io::Result<()> {
 		.take(10)
 		.filter(|(_, score)| score.total_cmp(&0.0).is_gt())
 	{
-		let id = k
-			.file_stem()
-			.map(|x| x.to_string_lossy().to_string())
-			.and_then(|x| manifest.get(&x));
+		let id = k.file_stem().map(|x| x.to_string_lossy().to_string());
 
-		let name = id.map(|x| x.to_owned()).unwrap_or_else(|| "N/a".to_owned());
+		let name = id
+			.clone()
+			.and_then(|x| manifest.get(&x))
+			.map(|x| x.to_owned())
+			.unwrap_or_else(|| "N/a".to_owned());
+
+		let id = id.unwrap_or_else(|| "N/a".to_owned());
 
 		println!("{name:?} ({id:?}) : {v:?}");
 	}
